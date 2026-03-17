@@ -1,0 +1,34 @@
+# Binaries
+precon
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build
+/dist/
+
+# Runtime data
+.precon/
+
+# Local config (API keys)
+precon.json
+.env

@@ -1,0 +1,21 @@
+{
+  "max_context_tokens": 200000,
+  "synthesis_budget": 4000,
+  "retriever_limit": 10,
+  "working_model": "claude-opus-4-6",
+  "fast_model": "claude-haiku-4-5-20251001",
+  "pg_conn_str": "postgres://postgres:postgres@localhost:5431/postgres",
+  "runpod_endpoint": "c8n31m8cx4hwo3",
+  "dream_prompts": [
+    {
+      "name": "workflow_patterns",
+      "prompt": "Look at my recent sessions and identify any recurring patterns, pain points, or workflow inefficiencies. Be specific — cite examples from the data.",
+      "lookback": "7d"
+    },
+    {
+      "name": "knowledge_gaps",
+      "prompt": "Based on my recent work, identify areas where I seem to be struggling or repeatedly looking up the same information. Suggest what documentation or context would help.",
+      "lookback": "30d"
+    }
+  ]
+}
