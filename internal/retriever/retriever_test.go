@@ -29,7 +29,7 @@ func (m *mockStore) Store(ctx context.Context, mem *tier.Memory) error { return 
 func (m *mockStore) Retrieve(ctx context.Context, id string) (*tier.Memory, error) {
 	return nil, nil
 }
-func (m *mockStore) Delete(ctx context.Context, id string) error            { return nil }
+func (m *mockStore) Delete(ctx context.Context, id string) error { return nil }
 func (m *mockStore) List(ctx context.Context, conversationID string) ([]tier.Memory, error) {
 	return nil, nil
 }

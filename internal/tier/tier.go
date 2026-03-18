@@ -15,10 +15,10 @@ type Level int
 
 const (
 	L1 Level = iota + 1 // Active context (in the prompt)
-	L2                   // Hot storage (SQLite, queried every prompt)
-	L3                   // Warm storage (summaries with pointers)
-	L4                   // Semantic storage (pgvector, embedding search)
-	L5                   // Cold storage (files, cloud, archive)
+	L2                  // Hot storage (SQLite, queried every prompt)
+	L3                  // Warm storage (summaries with pointers)
+	L4                  // Semantic storage (pgvector, embedding search)
+	L5                  // Cold storage (files, cloud, archive)
 )
 
 // String returns the tier name.
@@ -48,8 +48,8 @@ type Memory struct {
 	IsSummary      bool      `json:"is_summary"`       // True for L3 summary entries
 	FullContentRef string    `json:"full_content_ref"` // L4 ID when this is an L3 summary
 	TokenCount     int       `json:"token_count"`
-	Relevance      float64   `json:"relevance"`        // 0.0-1.0, current relevance score
-	Tier           Level     `json:"tier"`              // Which tier this memory lives in
+	Relevance      float64   `json:"relevance"` // 0.0-1.0, current relevance score
+	Tier           Level     `json:"tier"`      // Which tier this memory lives in
 	Keywords       []string  `json:"keywords"`
 	CreatedAt      time.Time `json:"created_at"`
 	LastAccessedAt time.Time `json:"last_accessed_at"` // For recency-based eviction
@@ -59,7 +59,7 @@ type Memory struct {
 // RetrievalResult wraps a Memory with search metadata.
 type RetrievalResult struct {
 	Memory     Memory  `json:"memory"`
-	Score      float64 `json:"score"`      // Search relevance (0.0-1.0)
+	Score      float64 `json:"score"` // Search relevance (0.0-1.0)
 	SourceTier Level   `json:"source_tier"`
 }
 
