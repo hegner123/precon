@@ -119,7 +119,7 @@ func TestReview_SuccessfulToolUse(t *testing.T) {
 	}
 
 	store := newMockStore()
-	p := New(testLogger(), llm, store, nil, "test-model")
+	p := New(testLogger(), llm, store, "test-model")
 
 	got, err := p.Review(context.Background(), "write tests", "I'll write the tests now", nil)
 	if err != nil {
@@ -155,7 +155,7 @@ func TestReview_EmptyDecision(t *testing.T) {
 	}
 
 	store := newMockStore()
-	p := New(testLogger(), llm, store, nil, "test-model")
+	p := New(testLogger(), llm, store, "test-model")
 
 	got, err := p.Review(context.Background(), "hello", "hi there", nil)
 	if err != nil {
@@ -193,7 +193,7 @@ func TestReview_RetryOnLLMError(t *testing.T) {
 	p := New(testLogger(), &retryableMock{
 		failCount: 1,
 		response:  origResponse,
-	}, newMockStore(), nil, "test-model")
+	}, newMockStore(), "test-model")
 
 	got, err := p.Review(context.Background(), "test", "response", nil)
 	if err != nil {
@@ -234,7 +234,7 @@ func TestReview_AllRetriesFail(t *testing.T) {
 		toolErr: fmt.Errorf("persistent failure"),
 	}
 
-	p := New(testLogger(), llm, newMockStore(), nil, "test-model")
+	p := New(testLogger(), llm, newMockStore(), "test-model")
 
 	got, err := p.Review(context.Background(), "test", "response", nil)
 	if err != nil {
@@ -269,12 +269,12 @@ func TestReview_NoToolUseInResponse(t *testing.T) {
 
 	llm := &retryableMockWithResponses{
 		responses: []*api.Response{
-			textResp,                              // first: no tool_use
-			makeToolResponse(successDecision),     // second: proper tool_use
+			textResp,                          // first: no tool_use
+			makeToolResponse(successDecision), // second: proper tool_use
 		},
 	}
 
-	p := New(testLogger(), llm, newMockStore(), nil, "test-model")
+	p := New(testLogger(), llm, newMockStore(), "test-model")
 
 	got, err := p.Review(context.Background(), "test", "response", nil)
 	if err != nil {
@@ -306,7 +306,7 @@ func (m *retryableMockWithResponses) CompleteWithTools(_ context.Context, _ *api
 
 func TestApply_StoresNewTopics(t *testing.T) {
 	store := newMockStore()
-	p := New(testLogger(), &mockLLM{}, store, nil, "test-model")
+	p := New(testLogger(), &mockLLM{}, store, "test-model")
 
 	decision := &Decision{
 		NewTopics: []TopicEntry{
@@ -339,7 +339,7 @@ func TestApply_StoresNewTopics(t *testing.T) {
 
 func TestApply_UpdatesRelevanceScores(t *testing.T) {
 	store := newMockStore()
-	p := New(testLogger(), &mockLLM{}, store, nil, "test-model")
+	p := New(testLogger(), &mockLLM{}, store, "test-model")
 
 	decision := &Decision{
 		UpdatedScores: []ScoreUpdate{
@@ -364,7 +364,7 @@ func TestApply_UpdatesRelevanceScores(t *testing.T) {
 func TestApply_HandlesStoreErrors(t *testing.T) {
 	store := newMockStore()
 	store.storeErr = fmt.Errorf("disk full")
-	p := New(testLogger(), &mockLLM{}, store, nil, "test-model")
+	p := New(testLogger(), &mockLLM{}, store, "test-model")
 
 	decision := &Decision{
 		NewTopics: []TopicEntry{
@@ -386,7 +386,7 @@ func TestApply_HandlesStoreErrors(t *testing.T) {
 func TestApply_HandlesUpdateErrors(t *testing.T) {
 	store := newMockStore()
 	store.updateErr = fmt.Errorf("not found")
-	p := New(testLogger(), &mockLLM{}, store, nil, "test-model")
+	p := New(testLogger(), &mockLLM{}, store, "test-model")
 
 	decision := &Decision{
 		UpdatedScores: []ScoreUpdate{
@@ -496,7 +496,7 @@ func TestReview_WithToolResults(t *testing.T) {
 		toolResponse: makeToolResponse(decision),
 	}
 
-	p := New(testLogger(), llm, newMockStore(), nil, "test-model")
+	p := New(testLogger(), llm, newMockStore(), "test-model")
 
 	toolResults := []string{
 		"Tool: checkfor → 5 matches",
@@ -521,7 +521,7 @@ func TestReview_ContextCancellation(t *testing.T) {
 		toolErr: ctx.Err(),
 	}
 
-	p := New(testLogger(), llm, newMockStore(), nil, "test-model")
+	p := New(testLogger(), llm, newMockStore(), "test-model")
 
 	got, err := p.Review(ctx, "test", "response", nil)
 	if err != nil {

@@ -145,9 +145,9 @@ func (r *REPL) persistTurn(ctx context.Context, tc turnContext) {
 	)
 }
 
-// runBackgroundPersister runs the Haiku-based persister on the engine context.
+// runBackgroundPersister runs the Haiku-based persister on the given context.
 // This runs in a goroutine and survives request cancellation.
-func (r *REPL) runBackgroundPersister(tc turnContext) {
+func (r *REPL) runBackgroundPersister(ctx context.Context, tc turnContext) {
 	start := time.Now()
 
 	// Collect tool result summaries for the persister
@@ -163,14 +163,14 @@ func (r *REPL) runBackgroundPersister(tc turnContext) {
 		toolSummaries = append(toolSummaries, summary.String())
 	}
 
-	decision, err := r.persister.Review(r.engineCtx, tc.UserMessage, tc.Response, toolSummaries)
+	decision, err := r.persister.Review(ctx, tc.UserMessage, tc.Response, toolSummaries)
 	if err != nil {
 		r.log.Error("background persister review failed", "error", err, "duration", time.Since(start))
 		return
 	}
 
 	// Apply decision (writes to L2, updates scores)
-	if err := r.persister.Apply(r.engineCtx, decision, r.config.ConversationID); err != nil {
+	if err := r.persister.Apply(ctx, decision, r.config.ConversationID); err != nil {
 		r.log.Error("background persister apply failed", "error", err, "duration", time.Since(start))
 		return
 	}

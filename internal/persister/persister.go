@@ -79,19 +79,17 @@ type Persister struct {
 	log          *slog.Logger
 	llm          LLM
 	l2           L2Writer
-	eviction     tier.EvictionPolicy
 	model        string
 	systemPrompt string
 }
 
 // New creates a Persister with the given LLM and L2 store.
-func New(log *slog.Logger, llm LLM, l2 L2Writer, eviction tier.EvictionPolicy, model string) *Persister {
+func New(log *slog.Logger, llm LLM, l2 L2Writer, model string) *Persister {
 	return &Persister{
-		log:      log,
-		llm:      llm,
-		l2:       l2,
-		eviction: eviction,
-		model:    model,
+		log:   log,
+		llm:   llm,
+		l2:    l2,
+		model: model,
 		systemPrompt: `You are a persistence agent. After each working agent turn, you review the conversation and decide what knowledge to save.
 
 You MUST call the persist_decision tool with your analysis. Do not respond with text.
@@ -306,23 +304,12 @@ func (p *Persister) Apply(ctx context.Context, decision *Decision, conversationI
 		updated++
 	}
 
-	// 3. Trigger eviction if needed
-	if decision.ShouldEvict && p.eviction != nil {
-		p.log.Info("eviction triggered by persister")
-		memories, err := p.l2.List(ctx, conversationID)
-		if err != nil {
-			p.log.Warn("failed to list memories for eviction", "error", err)
-		} else {
-			toEvict := p.eviction.ShouldEvict(ctx, memories)
-			for _, mem := range toEvict {
-				if err := p.l2.Delete(ctx, mem.ID); err != nil {
-					p.log.Warn("eviction delete failed", "id", mem.ID, "error", err)
-				}
-			}
-			if len(toEvict) > 0 {
-				p.log.Info("evicted memories from L2", "count", len(toEvict))
-			}
-		}
+	// 3. ShouldEvict is noted but not acted on here — the Evictor runs
+	// independently via REPL.evictor.CheckAndEvict and handles the full
+	// L2→L4 migration pipeline (embed, store in L4, delete from L2, generate L3 summary).
+	// Deleting from L2 here without L4 migration would cause data loss.
+	if decision.ShouldEvict {
+		p.log.Info("persister flagged eviction needed (handled by Evictor)")
 	}
 
 	p.log.Info("persistence applied",

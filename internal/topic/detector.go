@@ -78,9 +78,11 @@ func (d *Detector) IdentifyTopic(ctx context.Context, messages []Message) (*Topi
 
 	prompt := buildTopicIdentificationPrompt(messages)
 
+	sys := api.NewSystemString("You are a topic analysis assistant. You respond with ONLY valid JSON, no markdown fences, no preamble, no explanation.")
 	req := &api.Request{
 		Model:     d.model,
 		MaxTokens: 300,
+		System:    &sys,
 		Messages: []api.MessageParam{
 			api.NewUserMessage(prompt),
 		},
@@ -115,9 +117,11 @@ func (d *Detector) DetectShift(ctx context.Context, messages []Message, currentT
 
 	prompt := buildTopicShiftPrompt(messages, currentTopic)
 
+	sys := api.NewSystemString("You are a topic analysis assistant. You respond with ONLY valid JSON, no markdown fences, no preamble, no explanation.")
 	req := &api.Request{
 		Model:     d.model,
 		MaxTokens: 500,
+		System:    &sys,
 		Messages: []api.MessageParam{
 			api.NewUserMessage(prompt),
 		},

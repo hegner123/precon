@@ -40,8 +40,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS summaries_fts USING fts5(
 type Summary struct {
 	ID             string
 	ConversationID string
-	L4Ref          string   // ID of the full content in L4
-	Text           string   // compressed summary text
+	L4Ref          string // ID of the full content in L4
+	Text           string // compressed summary text
 	Keywords       []string
 	TokenCount     int
 }
@@ -169,9 +169,9 @@ func (s *L3Store) Query(ctx context.Context, prompt string, limit int) ([]tier.R
 	defer rows.Close()
 
 	type scored struct {
-		mem    tier.Memory
-		l4Ref  string
-		rank   float64
+		mem   tier.Memory
+		l4Ref string
+		rank  float64
 	}
 
 	var matches []scored
@@ -200,6 +200,7 @@ func (s *L3Store) Query(ctx context.Context, prompt string, limit int) ([]tier.R
 
 		// Keywords stored as JSON by this package — unmarshal failure means DB corruption
 		if err := json.Unmarshal([]byte(kwJSON), &m.Keywords); err != nil {
+			s.log.Warn("corrupt keywords JSON in L3", "id", m.ID, "error", err)
 			m.Keywords = nil
 		}
 
@@ -354,6 +355,7 @@ func (s *L3Store) scanSummary(row *sql.Row) (*tier.Memory, error) {
 
 	// Keywords stored as JSON by this package — unmarshal failure means DB corruption
 	if err := json.Unmarshal([]byte(kwJSON), &m.Keywords); err != nil {
+		s.log.Warn("corrupt keywords JSON in L3", "id", m.ID, "error", err)
 		m.Keywords = nil
 	}
 
@@ -388,6 +390,7 @@ func (s *L3Store) scanSummaryFromRows(rows *sql.Rows) (*tier.Memory, error) {
 
 	// Keywords stored as JSON by this package — unmarshal failure means DB corruption
 	if err := json.Unmarshal([]byte(kwJSON), &m.Keywords); err != nil {
+		s.log.Warn("corrupt keywords JSON in L3", "id", m.ID, "error", err)
 		m.Keywords = nil
 	}
 

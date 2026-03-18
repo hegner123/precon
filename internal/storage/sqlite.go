@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,8 +15,12 @@ import (
 
 // parseRFC3339 parses an RFC3339 timestamp string and returns the resulting time.
 // Timestamps are written by this package in RFC3339 — parse failure means DB corruption, not user input.
+// On failure, logs a warning and returns zero time.
 func parseRFC3339(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		slog.Warn("corrupt timestamp in database", "raw", s, "error", err)
+	}
 	return t
 }
 
@@ -197,6 +202,7 @@ func (s *SQLiteStore) Query(ctx context.Context, prompt string, limit int) ([]ti
 
 		// Keywords stored as JSON by this package — unmarshal failure means DB corruption
 		if err := json.Unmarshal([]byte(kwJSON), &m.Keywords); err != nil {
+			slog.Warn("corrupt keywords JSON in database", "id", m.ID, "error", err)
 			m.Keywords = nil
 		}
 
@@ -388,6 +394,7 @@ func (s *SQLiteStore) GetTopic(ctx context.Context, id string) (*Topic, error) {
 
 	// Keywords stored as JSON by this package — unmarshal failure means DB corruption
 	if err := json.Unmarshal([]byte(kwJSON), &t.Keywords); err != nil {
+		slog.Warn("corrupt keywords JSON in database", "id", t.ID, "error", err)
 		t.Keywords = nil
 	}
 

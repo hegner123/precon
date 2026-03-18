@@ -271,7 +271,9 @@ func (s *PgvectorStore) Query(ctx context.Context, prompt string, limit int) ([]
 		}
 
 		// Keywords stored as JSON by this package — unmarshal failure means DB corruption
-		json.Unmarshal(keywordsJSON, &mem.Keywords)
+		if err := json.Unmarshal(keywordsJSON, &mem.Keywords); err != nil {
+			s.log.Warn("corrupt keywords JSON in L4", "id", mem.ID, "error", err)
+		}
 		mem.Tier = tier.L4
 		mem.PromotedFrom = tier.Level(promotedFrom)
 
@@ -286,11 +288,17 @@ func (s *PgvectorStore) Query(ctx context.Context, prompt string, limit int) ([]
 		return nil, fmt.Errorf("L4 query rows: %w", err)
 	}
 
-	// Update last_accessed_at for returned results — best-effort
-	now := time.Now()
-	for _, r := range results {
-		if _, err := s.pool.Exec(ctx, "UPDATE precon_memories SET last_accessed_at = $1 WHERE id = $2", now, r.Memory.ID); err != nil {
-			s.log.Warn("failed to update last_accessed_at", "id", r.Memory.ID, "error", err)
+	// Batch update last_accessed_at for returned results — best-effort
+	if len(results) > 0 {
+		now := time.Now()
+		ids := make([]string, len(results))
+		for i, r := range results {
+			ids[i] = r.Memory.ID
+		}
+		if _, err := s.pool.Exec(ctx,
+			"UPDATE precon_memories SET last_accessed_at = $1 WHERE id = ANY($2)",
+			now, ids); err != nil {
+			s.log.Warn("failed to batch update last_accessed_at", "count", len(ids), "error", err)
 		}
 	}
 
@@ -312,13 +320,25 @@ func (s *PgvectorStore) Delete(ctx context.Context, id string) error {
 }
 
 // List returns all memories for a conversation from L4.
+// If conversationID is empty, all L4 memories are returned (matches SQLiteStore.List behavior).
 func (s *PgvectorStore) List(ctx context.Context, conversationID string) ([]tier.Memory, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, conversation_id, topic_id, content, is_summary, full_content_ref,
-				token_count, relevance, keywords, created_at, last_accessed_at, promoted_from
-		 FROM precon_memories
-		 WHERE conversation_id = $1
-		 ORDER BY created_at DESC`, conversationID)
+	var rows pgx.Rows
+	var err error
+
+	if conversationID == "" {
+		rows, err = s.pool.Query(ctx,
+			`SELECT id, conversation_id, topic_id, content, is_summary, full_content_ref,
+					token_count, relevance, keywords, created_at, last_accessed_at, promoted_from
+			 FROM precon_memories
+			 ORDER BY created_at DESC`)
+	} else {
+		rows, err = s.pool.Query(ctx,
+			`SELECT id, conversation_id, topic_id, content, is_summary, full_content_ref,
+					token_count, relevance, keywords, created_at, last_accessed_at, promoted_from
+			 FROM precon_memories
+			 WHERE conversation_id = $1
+			 ORDER BY created_at DESC`, conversationID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("L4 list: %w", err)
 	}
@@ -341,7 +361,9 @@ func (s *PgvectorStore) List(ctx context.Context, conversationID string) ([]tier
 		}
 
 		// Keywords stored as JSON by this package — unmarshal failure means DB corruption
-		json.Unmarshal(keywordsJSON, &mem.Keywords)
+		if err := json.Unmarshal(keywordsJSON, &mem.Keywords); err != nil {
+			s.log.Warn("corrupt keywords JSON in L4", "id", mem.ID, "error", err)
+		}
 		mem.Tier = tier.L4
 		mem.PromotedFrom = tier.Level(promotedFrom)
 		memories = append(memories, mem)

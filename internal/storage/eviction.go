@@ -24,8 +24,8 @@ const L2TargetPercent = 0.80
 type Evictor struct {
 	l2         *SQLiteStore
 	l4         *PgvectorStore
-	l3         *L3Store     // optional — summaries generated during eviction
-	summarizer *Summarizer  // optional — generates L3 summaries
+	l3         *L3Store    // optional — summaries generated during eviction
+	summarizer *Summarizer // optional — generates L3 summaries
 	embedC     *embedding.Client
 	log        *slog.Logger
 	threshold  int64 // L2 token budget
@@ -127,7 +127,8 @@ func (e *Evictor) CheckAndEvict(ctx context.Context, conversationID string) (int
 		}
 
 		if err := e.l2.Delete(ctx, mem.ID); err != nil {
-			e.log.Error("L2 delete during eviction failed", "id", mem.ID, "error", err)
+			e.log.Error("L2 delete during eviction failed — memory exists in both L2 and L4",
+				"id", mem.ID, "error", err)
 			continue
 		}
 

@@ -4,12 +4,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
 
-// DevLogPath is the absolute path to the agentic output log during development.
-const DevLogPath = "/Users/home/Documents/Code/Go_dev/nostop/agent.log"
+// agentLogPath returns ~/.precon/agent.log, creating the directory if needed.
+func agentLogPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(home, ".precon")
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return ""
+	}
+	return filepath.Join(dir, "agent.log")
+}
 
 // AgentLogger writes structured agentic events to a log file.
 // All tool calls, results, and loop iterations are recorded.
@@ -27,9 +38,13 @@ var (
 // GetAgentLogger returns the singleton agent logger, creating the log file if needed.
 func GetAgentLogger() *AgentLogger {
 	agentLogOnce.Do(func() {
-		f, err := os.OpenFile(DevLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		logPath := agentLogPath()
+		if logPath == "" {
+			return
+		}
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to open agent log %s: %s\n", DevLogPath, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to open agent log %s: %s\n", logPath, err)
 			return
 		}
 		agentLog = &AgentLogger{file: f}

@@ -260,8 +260,9 @@ func (r *REPL) redraw(status string) {
 	)
 }
 
-// Close cancels the engine context and waits for background goroutines.
+// Close cancels the engine context, waits for background goroutines, and cleans up resources.
 func (r *REPL) Close() {
 	r.engineCancel()
 	r.wg.Wait()
+	tools.GetAgentLogger().Close()
 }

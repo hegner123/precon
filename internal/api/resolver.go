@@ -222,6 +222,12 @@ func IsModelNotFound(err error) bool {
 // withModelFallback wraps an API call with automatic model resolution.
 // If the resolver is nil, the call passes straight through.
 //
+// Resource management contract: fn must not return resources that require
+// cleanup on error paths. When T implements io.Closer (e.g., *StreamReader),
+// fn must ensure that a non-nil T is only returned alongside a nil error.
+// If fn returns (non-nil T, non-nil error), the non-nil T will be discarded
+// without closing during fallback iteration.
+//
 // The flow:
 //  1. Apply any cached resolution (from a prior fallback this session).
 //  2. Attempt the call.

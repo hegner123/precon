@@ -39,7 +39,7 @@ func NewClient(endpointID, apiKey string, log *slog.Logger) *Client {
 		endpointID: endpointID,
 		apiKey:     apiKey,
 		httpClient: &http.Client{
-			Timeout: 300 * time.Second,
+			Timeout: 60 * time.Second,
 		},
 		log: log,
 	}
