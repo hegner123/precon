@@ -300,9 +300,9 @@ func TestPrettyOutput_BashError(t *testing.T) {
 func TestPrettyOutput_Write(t *testing.T) {
 	output := `{"file":"/path","bytes_written":42,"status":"ok"}`
 	got := prettyOutput(output, 500)
-	// Has "status" and "file" keys — triggers the status handler
-	if got != "/path: ok" {
-		t.Fatalf("expected %q, got %q", "/path: ok", got)
+	// Has "status" and "file" keys — triggers the status handler (shortPath trims to last 2 components)
+	if got != "path: ok" {
+		t.Fatalf("expected %q, got %q", "path: ok", got)
 	}
 }
 
@@ -572,7 +572,7 @@ func TestPrettyOutput_Repfor(t *testing.T) {
 func TestPrettyOutput_Sig(t *testing.T) {
 	output := `{"file":"main.go","functions":[{},{}],"types":[{}]}`
 	got := prettyOutput(output, 500)
-	want := "main.go: 2 functions, 1 types"
+	want := "2 functions, 1 types"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -590,7 +590,7 @@ func TestPrettyOutput_Errs(t *testing.T) {
 func TestPrettyOutput_Delete(t *testing.T) {
 	output := `{"original_path":"/tmp/foo.txt","trash_path":"/Users/me/.Trash/foo.txt"}`
 	got := prettyOutput(output, 500)
-	want := "moved /tmp/foo.txt to Trash"
+	want := "trashed tmp/foo.txt"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
@@ -629,3 +629,4 @@ func TestPrettyOutput_GenericStatus(t *testing.T) {
 		t.Fatalf("expected %q, got %q", "completed", got)
 	}
 }
+

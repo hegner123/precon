@@ -3,6 +3,9 @@ package repl
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 // truncate shortens a string to maxLen characters.
@@ -11,6 +14,159 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// formatDuration formats a duration as a compact human-readable string.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+}
+
+// toolInputSummary produces a compact one-line description of what a tool call does
+// based on the tool name and input parameters. Used for the single-line tool display.
+func toolInputSummary(name string, input map[string]any) string {
+	switch name {
+	case "checkfor":
+		search, _ := input["search"].(string)
+		dirs := countArray(input["dirs"])
+		return fmt.Sprintf("%q in %d dirs", truncate(search, 40), dirs)
+
+	case "repfor":
+		search, _ := input["search"].(string)
+		replace, _ := input["replace"].(string)
+		dirs := countArray(input["dirs"])
+		dryRun, _ := input["dry_run"].(bool)
+		suffix := ""
+		if dryRun {
+			suffix = " (dry run)"
+		}
+		return fmt.Sprintf("%q → %q in %d dirs%s", truncate(search, 25), truncate(replace, 25), dirs, suffix)
+
+	case "read":
+		file := shortPath(inputStr(input, "file"))
+		start, hasStart := input["start"].(float64)
+		end, hasEnd := input["end"].(float64)
+		if hasStart && hasEnd {
+			return fmt.Sprintf("%s:%d–%d", file, int(start), int(end))
+		}
+		if hasStart {
+			return fmt.Sprintf("%s:%d–", file, int(start))
+		}
+		return file
+
+	case "write":
+		file := shortPath(inputStr(input, "file"))
+		content, _ := input["content"].(string)
+		lines := strings.Count(content, "\n") + 1
+		return fmt.Sprintf("%s (%d lines)", file, lines)
+
+	case "bash":
+		cmd, _ := input["command"].(string)
+		return truncate(cmd, 60)
+
+	case "sig":
+		return shortPath(inputStr(input, "file"))
+
+	case "stump":
+		dir := shortPath(inputStr(input, "dir"))
+		if depth, ok := input["depth"].(float64); ok && depth > 0 {
+			return fmt.Sprintf("%s (depth %d)", dir, int(depth))
+		}
+		return dir
+
+	case "cleanDiff":
+		if ref, ok := input["ref"].(string); ok && ref != "" {
+			return ref
+		}
+		if staged, ok := input["staged"].(bool); ok && staged {
+			return "staged"
+		}
+		return "working tree"
+
+	case "splice":
+		file := shortPath(inputStr(input, "file"))
+		if line, ok := input["line"].(float64); ok {
+			return fmt.Sprintf("%s at line %d", file, int(line))
+		}
+		return file
+
+	case "split":
+		file := shortPath(inputStr(input, "file"))
+		if line, ok := input["line"].(float64); ok {
+			return fmt.Sprintf("%s at line %d", file, int(line))
+		}
+		return file
+
+	case "delete":
+		return shortPath(inputStr(input, "path"))
+
+	case "notab":
+		return shortPath(inputStr(input, "file"))
+
+	case "tabcount":
+		return shortPath(inputStr(input, "file"))
+
+	case "utf8":
+		return shortPath(inputStr(input, "file"))
+
+	case "imports":
+		dir := shortPath(inputStr(input, "dir"))
+		if recursive, ok := input["recursive"].(bool); ok && recursive {
+			return dir + " (recursive)"
+		}
+		return dir
+
+	case "errs":
+		if format, ok := input["format"].(string); ok && format != "" {
+			return fmt.Sprintf("(%s)", format)
+		}
+		return ""
+
+	case "conflicts":
+		return shortPath(inputStr(input, "file"))
+
+	case "transform":
+		if exec, ok := input["exec"].(string); ok && exec != "" {
+			return fmt.Sprintf("exec: %s", truncate(exec, 50))
+		}
+		if file, ok := input["file"].(string); ok && file != "" {
+			return fmt.Sprintf("file: %s", shortPath(file))
+		}
+		return ""
+
+	default:
+		// MCP tools or unknown — show first string param value
+		for _, v := range input {
+			if s, ok := v.(string); ok && s != "" {
+				return truncate(s, 50)
+			}
+		}
+		return ""
+	}
+}
+
+// formatToolLine formats a complete single-line tool display.
+// Success: "  ● name summary → result (duration)"
+// Error:   "  ✗ name summary (duration)\n      error message"
+func formatToolLine(name, inputSum, resultSum, errMsg string, elapsed time.Duration, isError bool) string {
+	dur := formatDuration(elapsed)
+	if isError {
+		line := fmt.Sprintf("  ✗ %s %s (%s)", name, inputSum, dur)
+		if errMsg != "" {
+			line += "\n" + fmt.Sprintf("      %s", truncate(errMsg, 120))
+		}
+		return line
+	}
+	if resultSum != "" {
+		return fmt.Sprintf("  ● %s %s → %s (%s)", name, inputSum, resultSum, dur)
+	}
+	return fmt.Sprintf("  ● %s %s (%s)", name, inputSum, dur)
 }
 
 // prettyOutput attempts to produce a compact human-readable summary of tool output.
@@ -76,7 +232,6 @@ func prettyOutput(output string, maxLen int) string {
 
 	// sig: {"file", "functions", "types"}
 	if _, hasFunctions := obj["functions"]; hasFunctions {
-		file, _ := obj["file"].(string)
 		nFuncs, nTypes := 0, 0
 		if fns, ok := obj["functions"].([]any); ok {
 			nFuncs = len(fns)
@@ -84,7 +239,7 @@ func prettyOutput(output string, maxLen int) string {
 		if tps, ok := obj["types"].([]any); ok {
 			nTypes = len(tps)
 		}
-		return fmt.Sprintf("%s: %d functions, %d types", file, nFuncs, nTypes)
+		return fmt.Sprintf("%d functions, %d types", nFuncs, nTypes)
 	}
 
 	// errs: {"count", "files", "format"}
@@ -101,7 +256,7 @@ func prettyOutput(output string, maxLen int) string {
 	// delete: {"original_path", "trash_path"}
 	if _, ok := obj["trash_path"].(string); ok {
 		origPath, _ := obj["original_path"].(string)
-		return fmt.Sprintf("moved %s to Trash", origPath)
+		return fmt.Sprintf("trashed %s", shortPath(origPath))
 	}
 
 	// conflicts: {"total", "has_diff3"}
@@ -111,23 +266,65 @@ func prettyOutput(output string, maxLen int) string {
 		}
 	}
 
+	// notab: {"replacements", "lines_affected"}
+	if replacements, ok := obj["replacements"].(float64); ok {
+		if lines, ok := obj["lines_affected"].(float64); ok {
+			if int(replacements) == 0 {
+				return "no changes"
+			}
+			return fmt.Sprintf("%d replacements on %d lines", int(replacements), int(lines))
+		}
+	}
+
+	// tabcount: {"tabs", "spaces"}
+	if tabs, ok := obj["tabs"].(float64); ok {
+		if spaces, ok := obj["spaces"].(float64); ok {
+			return fmt.Sprintf("%d tabs, %d spaces", int(tabs), int(spaces))
+		}
+	}
+
+	// read/write: {"status", "file"}
+	if status, ok := obj["status"].(string); ok {
+		if file, ok := obj["file"].(string); ok {
+			return fmt.Sprintf("%s: %s", shortPath(file), status)
+		}
+		return status
+	}
+
 	// Generic: "summary" string
 	if summary, ok := obj["summary"].(string); ok && summary != "" {
 		return truncate(summary, maxLen)
 	}
 
-	// Generic: "status" string
-	if status, ok := obj["status"].(string); ok {
-		if file, ok := obj["file"].(string); ok {
-			return fmt.Sprintf("%s: %s", file, status)
-		}
-		return status
-	}
+	// Fallback: truncated raw output (no pretty-printed JSON dump)
+	return truncate(output, maxLen)
+}
 
-	// Fallback: pretty-printed JSON
-	pretty, err := json.MarshalIndent(obj, "    ", "  ")
-	if err != nil {
-		return truncate(output, maxLen)
+// inputStr extracts a string value from an input map, returning "" if missing.
+func inputStr(input map[string]any, key string) string {
+	s, _ := input[key].(string)
+	return s
+}
+
+// countArray returns the length of a value that should be a []any, or 0.
+func countArray(v any) int {
+	if arr, ok := v.([]any); ok {
+		return len(arr)
 	}
-	return truncate(string(pretty), maxLen)
+	return 0
+}
+
+// shortPath returns the last 2 path components for compact display.
+// "/Users/home/Documents/Code/Go_dev/precon/internal/repl/send.go" → "repl/send.go"
+func shortPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	parent := filepath.Base(dir)
+	if parent == "." || parent == "/" {
+		return base
+	}
+	return parent + "/" + base
 }

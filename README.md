@@ -17,7 +17,7 @@ Pre-conscious context management for LLM conversations. A multi-tier memory syst
 
 - Go 1.25+
 - PostgreSQL with [pgvector](https://github.com/pgvector/pgvector) extension (default: `localhost:5431`)
-- Embedding endpoint (RunPod with nomic-embed-text, 768 dimensions)
+- Embedding endpoint (RunPod serverless with nomic-embed-text, 768 dimensions)
 - [Anthropic API](https://console.anthropic.com/) key
 - [just](https://github.com/casey/just) command runner (optional, for build shortcuts)
 

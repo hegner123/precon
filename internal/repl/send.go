@@ -15,6 +15,7 @@ import (
 // Prevents unbounded API calls and tool execution if the model enters an infinite loop.
 const maxToolIterations = 50
 
+
 // send processes a user message through the agentic pipeline.
 // When the response contains tool_use blocks, executes tools and loops.
 func (r *REPL) send(ctx context.Context, message string) error {
@@ -94,36 +95,19 @@ func (r *REPL) send(ctx context.Context, message string) error {
 		r.redraw("thinking...")
 		r.bz.CursorToScroll()
 
-		// Stream response with thinking and text
+		// Buffer the full stream — no output until complete.
+		// This gives us full control over styling and newlines.
 		var responseText strings.Builder
-		inThinking := false
+		var iterThinking strings.Builder
 		resp, err := r.client.StreamWithCallback(ctx, req, func(event *api.StreamEvent) error {
-			switch event.Type {
-			case api.StreamEventContentBlockStart:
-				if event.ContentBlock != nil && event.ContentBlock.IsThinking() {
-					inThinking = true
-				}
-			case api.StreamEventContentBlockDelta:
-				if event.Delta == nil {
-					return nil
-				}
-				if event.Delta.Thinking != "" {
-					fmt.Print(r.thinkingStyle.Render(event.Delta.Thinking))
-					turnThinking.WriteString(event.Delta.Thinking)
-				}
-				if event.Delta.Text != "" {
-					if inThinking {
-						fmt.Println()
-						inThinking = false
-					}
-					responseText.WriteString(event.Delta.Text)
-					fmt.Print(event.Delta.Text)
-				}
-			case api.StreamEventContentBlockStop:
-				if inThinking {
-					fmt.Println()
-					inThinking = false
-				}
+			if event.Type != api.StreamEventContentBlockDelta || event.Delta == nil {
+				return nil
+			}
+			if event.Delta.Thinking != "" {
+				iterThinking.WriteString(event.Delta.Thinking)
+			}
+			if event.Delta.Text != "" {
+				responseText.WriteString(event.Delta.Text)
 			}
 			return nil
 		})
@@ -135,11 +119,31 @@ func (r *REPL) send(ctx context.Context, message string) error {
 			return fmt.Errorf("API call failed (iteration %d): %w", iteration, err)
 		}
 
+		// Render buffered output with proper styling and formatting.
+		// Thinking: styled inline, trimmed.
+		// Response: rendered as markdown via glamour, trimmed.
+		if iterThinking.Len() > 0 {
+			turnThinking.WriteString(iterThinking.String())
+			styled := r.thinkingStyle.Render(strings.TrimRight(iterThinking.String(), "\n \t"))
+			fmt.Println(styled)
+		}
 		if responseText.Len() > 0 {
+			rendered, renderErr := r.renderer.Render(responseText.String())
+			if renderErr != nil {
+				// Fallback to raw text if glamour fails
+				rendered = responseText.String()
+			}
+			rendered = strings.TrimRight(rendered, "\n \t")
+			if rendered != "" {
+				fmt.Println(rendered)
+			}
+		}
+
+		// Blank line separates response from tool output
+		if resp.HasToolUse() && (responseText.Len() > 0 || iterThinking.Len() > 0) {
 			fmt.Println()
 		}
 
-		// Check for tool use
 		if !resp.HasToolUse() || r.executor == nil {
 			finalResp = resp
 
@@ -155,7 +159,7 @@ func (r *REPL) send(ctx context.Context, message string) error {
 		// Build assistant message with both text and tool_use blocks
 		r.messages = append(r.messages, assistantFromResponse(resp))
 
-		// Execute each tool and collect results
+		// Execute each tool and collect results — single-line display per tool
 		var resultBlocks []any
 		for _, block := range resp.GetToolUses() {
 			var input map[string]any
@@ -165,28 +169,24 @@ func (r *REPL) send(ctx context.Context, message string) error {
 				continue
 			}
 
-			// Show tool name and prettified input
-			inputPretty, marshalErr := json.MarshalIndent(input, "    ", "  ")
-			if marshalErr != nil {
-				inputPretty = []byte(fmt.Sprintf("%v", input))
-			}
-			fmt.Println(r.toolStyle.Render(fmt.Sprintf("  tool: %s", block.Name)))
-			fmt.Println(r.toolStyle.Render(fmt.Sprintf("    input: %s", string(inputPretty))))
-
+			toolStart := time.Now()
 			result := r.executor.Execute(ctx, block.Name, input)
+			elapsed := time.Since(toolStart)
+
 			rec := toolRecord{Name: block.Name, Input: input}
+			inputSum := toolInputSummary(block.Name, input)
+
 			if result.IsError {
-				fmt.Println(r.errorStyle.Render(fmt.Sprintf("    error: %s", truncate(result.Error, 200))))
+				line := formatToolLine(block.Name, inputSum, "", result.Error, elapsed, true)
+				fmt.Println(r.errorStyle.Render(line))
 				resultBlocks = append(resultBlocks, api.NewToolResultBlockError(block.ID, result.Error))
 				rec.Error = result.Error
 			} else {
-				output := result.Output
-				preview := prettyOutput(output, 500)
-				if preview != "" {
-					fmt.Println(r.toolStyle.Render(fmt.Sprintf("    output: %s", preview)))
-				}
-				resultBlocks = append(resultBlocks, api.NewToolResultBlock(block.ID, output))
-				rec.Output = output
+				preview := prettyOutput(result.Output, 200)
+				line := formatToolLine(block.Name, inputSum, preview, "", elapsed, false)
+				fmt.Println(r.toolStyle.Render(line))
+				resultBlocks = append(resultBlocks, api.NewToolResultBlock(block.ID, result.Output))
+				rec.Output = result.Output
 			}
 			turnTools = append(turnTools, rec)
 		}
@@ -196,6 +196,9 @@ func (r *REPL) send(ctx context.Context, message string) error {
 			Role:    api.RoleUser,
 			Content: resultBlocks,
 		})
+
+		// Blank line separates tool output from next iteration's thinking
+		fmt.Println()
 
 		// Status for next iteration
 		r.redraw("thinking...")

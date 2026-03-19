@@ -3,6 +3,8 @@
 ## References
 
 - **PLAN.md** — Full architecture, phases, data flow, open questions
+- **PROGRESS.md** — Phase completion tracker (check before starting any phase work)
+- **ARCHITECTURE.md** — Interface cheat-sheet (check before sig-ing core files)
 - **START.md** — Quick start and project structure
 - **RLM.pdf** — MIT paper (Zhang, Kraska, Khattab) that inspired the anti-compaction insight
 - **nostop** — Sibling project (../nostop) that proved topic-based archival; Precon evolves this
@@ -29,6 +31,8 @@ internal/tier/        # Memory tier interfaces and types
 internal/storage/     # SQLite + pgvector backends
 internal/topic/       # Topic detection and tracking
 internal/repl/        # Styled REPL (lipgloss + glamour + readline)
+internal/embedding/   # RunPod serverless embedding client (nomic-embed-text)
+internal/tools/       # Built-in tool definitions + registry + executor
 pkg/precon/           # Public engine API
 ```
 
@@ -37,7 +41,7 @@ pkg/precon/           # Public engine API
 - Go 1.25+
 - SQLite via modernc.org/sqlite (pure Go, no CGO)
 - PostgreSQL + pgvector on localhost:5431
-- Ollama with nomic-embed-text (768-dim embeddings)
-- Anthropic API (Haiku for unconscious agents, Opus for working agent)
+- RunPod serverless with nomic-embed-text (768-dim embeddings)
+- Anthropic API (Haiku 4.5 for unconscious agents, Opus 4.5 for working agent, Sonnet 4 for dreaming)
 - lipgloss v2 (styling) + glamour (markdown rendering) + readline (input)
 - JSON config (encoding/json, stdlib)

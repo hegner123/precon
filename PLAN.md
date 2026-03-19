@@ -33,9 +33,10 @@ you don't choose to get information input, your body just does it automatically.
   until retrieval volume exceeds the direct injection budget.
 - **Background Persister**: Haiku reviews working agent output after each turn, determines
   what to save/trim, writes persistence. Will use tool_use with a JSON schema for structured
-  output (not free-form JSON parsing) — requires expanding the persister's `LLM` interface
-  beyond the current `Complete(ctx, systemPrompt, userPrompt) (string, error)` signature to
-  support tool definitions and structured responses (Phase 5 work). Runs on the engine
+  output (not free-form JSON parsing) — the persister's `LLM` interface has been expanded
+  beyond the original `Complete(ctx, systemPrompt, userPrompt) (string, error)` signature to
+  include `CompleteWithTools(ctx, *api.Request) (*api.Response, error)` for tool definitions
+  and structured responses (completed in Phase 5). Runs on the engine
   context, not the request context, so persistence survives request cancellation.
 - **Tier Eviction**: Automatic promotion/demotion between memory tiers based on recency
   and relevance scoring.
@@ -248,7 +249,7 @@ Each item classified by migration effort:
 
 ## Implementation Phases
 
-### Phase 1: Foundation
+### Phase 1: Foundation ✅
 - Go module, project structure, CI
 - Core types: Memory, Tier, Topic, Message
 - Storage interface (tier-agnostic)
@@ -261,7 +262,7 @@ Each item classified by migration effort:
   pipeline components (Retriever, Persister, Synthesizer, Dreamer) accept an `*slog.Logger`
   parameter in their constructor. No component logs to stderr directly.
 
-### Phase 2: REPL + Basic Send Loop
+### Phase 2: REPL + Basic Send Loop ✅
 - Styled REPL with readline input and streaming output
 - lipgloss styling, glamour markdown rendering
 - API client wired up, basic send/receive working
@@ -273,20 +274,20 @@ Each item classified by migration effort:
   API for final request validation before sending.
 - No retrieval pipeline yet — just a working chat
 
-### Phase 3: L2 — Hot Storage
+### Phase 3: L2 — Hot Storage ✅
 - SQLite schema with FTS5 full-text index on message content and topic keywords
 - Topic detection and tracking (copy and adapt nostop's detector into persister)
 - Messages persist to L2 after each turn
 - Context manager with L1/L2 awareness
 - Tests against SQLite
 
-### Phase 4: Retriever + Direct Injection
+### Phase 4: Retriever + Direct Injection ✅
 - Retriever: queries L2 via FTS5 for relevant topics given user prompt
 - Direct injection: top-N results formatted and injected into system prompt
 - No synthesizer LLM call — Opus handles relevance filtering from raw results
 - Pre-prompt pipeline wiring: prompt → retriever → format → inject → API request
 
-### Phase 5: Background Persister
+### Phase 5: Background Persister ✅
 - Haiku-based output reviewer (runs after each working agent turn)
 - Uses tool_use with a JSON schema for structured output (not free-form JSON parsing).
   Schema defines: `new_topics` (array), `updated_scores` (array), `should_evict` (bool).
@@ -297,7 +298,7 @@ Each item classified by migration effort:
 - L1 pruning: drop low-relevance messages from the API request when near token budget
 - Topic lifecycle management
 
-### Phase 6: L4 — Semantic Storage (pgvector) + Synthesizer
+### Phase 6: L4 — Semantic Storage (pgvector) + Synthesizer ✅
 - pgvector integration (localhost:5431, existing infrastructure)
 - nomic-embed-text embeddings via RunPod serverless (768 dimensions)
 - Embedding generation for messages/topics
@@ -372,7 +373,6 @@ When modifying these shared interfaces, all consumers must be updated:
   `internal/persister/persister.go`, `internal/dreamer/dreamer.go`, `pkg/precon/precon.go`.
   If `List` is extended with pagination/time-window parameters, all implementations and
   consumers must update.
-- **`persister.LLM` interface** (`internal/persister/persister.go`) — must be expanded for
-  tool_use in Phase 5. Note: `synthesizer.LLM` and `dreamer.LLM` are separate identical
-  interfaces (correct Go consumer-defined pattern) but will diverge when persister needs
-  tool_use support.
+- **`persister.LLM` interface** (`internal/persister/persister.go`) — expanded in Phase 5 to
+  include `CompleteWithTools`. Note: `synthesizer.LLM` and `dreamer.LLM` are separate identical
+  interfaces (correct Go consumer-defined pattern) and remain at `Complete`-only.

@@ -56,7 +56,7 @@ precon/
 - Go 1.25+
 - SQLite (via modernc.org/sqlite, pure Go)
 - PostgreSQL + pgvector on localhost:5431 (for L4 semantic storage)
-- Ollama with nomic-embed-text model (for embeddings)
+- RunPod serverless with nomic-embed-text (768-dim embeddings)
 - Anthropic API key
 
 ## Quick Commands
@@ -70,4 +70,4 @@ just dev      # Build with race detector and run
 
 ## Current Status
 
-Phase 1 — Foundation. See PLAN.md for the full roadmap.
+Phase 6+ — L4 semantic storage and embedding integration. Phases 1–6 complete. See PLAN.md for the full roadmap and PROGRESS.md for completion status.
