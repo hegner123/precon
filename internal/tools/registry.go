@@ -166,6 +166,17 @@ func (r *Registry) APITools() []api.Tool {
 	return apiTools
 }
 
+// APIToolsWithCache returns API tools with cache control set on the last tool.
+// Places a cache breakpoint so the entire tool block is in the cached prefix.
+// Returns nil if no tools are registered.
+func (r *Registry) APIToolsWithCache(cache *api.CacheControl) []api.Tool {
+	tools := r.APITools()
+	if len(tools) > 0 {
+		tools[len(tools)-1].CacheControl = cache
+	}
+	return tools
+}
+
 // Len returns the number of registered tools.
 func (r *Registry) Len() int {
 	r.mu.RLock()

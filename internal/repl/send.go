@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
+	lip "charm.land/lipgloss/v2"
+	"github.com/hegner123/bezel"
 	"github.com/hegner123/precon/internal/api"
 	"github.com/hegner123/precon/internal/tier"
 )
@@ -15,6 +19,131 @@ import (
 // Prevents unbounded API calls and tool execution if the model enters an infinite loop.
 const maxToolIterations = 50
 
+// SGR escape sequences for streaming thinking output.
+// Matches thinkingStyle: italic + #C4B5FD (RGB 196, 181, 253).
+const (
+	thinkingSGROpen  = "\033[3;38;2;196;181;253m"
+	thinkingSGRClose = "\033[0m"
+)
+
+// streamResult holds the outcome of one streaming API call.
+type streamResult struct {
+	resp     *api.Response // assembled response (for tool_use detection, usage, etc.)
+	text     string        // accumulated text for L1/persistence
+	thinking string        // accumulated thinking for persistence
+	err      error
+}
+
+// streamWithBezel runs one streaming API call multiplexed with bezel events.
+// Tokens are written to stdout as they arrive. Bezel events (resize, typing,
+// Ctrl-C) are handled concurrently via select.
+func (r *REPL) streamWithBezel(ctx context.Context, req *api.Request) streamResult {
+	stream, err := r.client.Stream(ctx, req)
+	if err != nil {
+		return streamResult{err: err}
+	}
+	defer stream.Close()
+
+	// Feed stream events into a channel from a background goroutine.
+	eventCh := make(chan *api.StreamEvent, 8)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(eventCh)
+		for {
+			ev, err := stream.Next()
+			if err != nil {
+				if err != io.EOF {
+					select {
+					case errCh <- err:
+					default:
+					}
+				}
+				return
+			}
+			select {
+			case eventCh <- ev:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	asm := api.NewBlockAssembler()
+	var text, thinking strings.Builder
+	inThinking := false
+
+	for {
+		select {
+		case ev, ok := <-r.bz.Events():
+			if !ok {
+				if inThinking {
+					os.Stdout.WriteString(thinkingSGRClose + "\n")
+				}
+				return streamResult{err: context.Canceled}
+			}
+			if ev.Type == bezel.EventResize {
+				r.redraw("streaming...")
+				continue
+			}
+			action, _ := r.ed.HandleEvent(ev, r.km, &r.hist)
+			if action == bezel.ActionQuit {
+				if inThinking {
+					os.Stdout.WriteString(thinkingSGRClose + "\n")
+				}
+				return streamResult{err: context.Canceled}
+			}
+			// Update bezel to reflect typing during streaming
+			r.redraw("streaming...")
+
+		case sev, ok := <-eventCh:
+			if !ok {
+				// Stream complete
+				if inThinking {
+					os.Stdout.WriteString(thinkingSGRClose + "\n")
+				}
+				resp, respErr := asm.Response()
+				return streamResult{
+					resp:     resp,
+					text:     text.String(),
+					thinking: thinking.String(),
+					err:      respErr,
+				}
+			}
+			asm.Process(sev)
+
+			if sev.Type == api.StreamEventContentBlockDelta && sev.Delta != nil {
+				switch sev.Delta.Type {
+				case "thinking_delta":
+					if !inThinking {
+						os.Stdout.WriteString(thinkingSGROpen)
+						inThinking = true
+					}
+					thinking.WriteString(sev.Delta.Thinking)
+					os.Stdout.WriteString(sev.Delta.Thinking)
+				case "text_delta":
+					if inThinking {
+						os.Stdout.WriteString(thinkingSGRClose + "\n")
+						inThinking = false
+					}
+					text.WriteString(sev.Delta.Text)
+					os.Stdout.WriteString(sev.Delta.Text)
+				}
+			}
+
+		case err := <-errCh:
+			if inThinking {
+				os.Stdout.WriteString(thinkingSGRClose + "\n")
+			}
+			return streamResult{err: err}
+
+		case <-ctx.Done():
+			if inThinking {
+				os.Stdout.WriteString(thinkingSGRClose + "\n")
+			}
+			return streamResult{err: ctx.Err()}
+		}
+	}
+}
 
 // send processes a user message through the agentic pipeline.
 // When the response contains tool_use blocks, executes tools and loops.
@@ -66,19 +195,26 @@ func (r *REPL) send(ctx context.Context, message string) error {
 		},
 	}
 
-	// Build system prompt: base prompt + injected retrieval context
-	systemPrompt := r.config.SystemPrompt
-	if retrievedContext != "" {
-		systemPrompt += "\n\n" + retrievedContext
-	}
-	if systemPrompt != "" {
-		sys := api.NewSystemString(systemPrompt)
-		req.System = &sys
+	// Build system prompt as blocks: static (cached) + dynamic (uncached).
+	// The static block has a 1h cache breakpoint (BP2). Dynamic retrieved
+	// context sits after the breakpoint and does not bust the cache.
+	if r.config.SystemPrompt != "" {
+		if retrievedContext != "" {
+			sys := api.NewSystemBlocks(
+				r.staticSystemBlock,               // BP2: cached with 1h TTL
+				api.NewTextBlock(retrievedContext), // dynamic, after breakpoint
+			)
+			req.System = &sys
+		} else {
+			sys := api.NewSystemBlocks(r.staticSystemBlock)
+			req.System = &sys
+		}
 	}
 
-	// Add tools to request if enabled
+	// Add tools with cache breakpoint on last tool (BP1).
+	// Tools come before system in cache prefix order, so this is always stable.
 	if r.registry != nil {
-		req.Tools = r.registry.APITools()
+		req.Tools = r.registry.APIToolsWithCache(api.WithLongCache())
 	}
 
 	// Agentic loop: stream → check for tool_use → execute → send results → repeat
@@ -92,55 +228,28 @@ func (r *REPL) send(ctx context.Context, message string) error {
 	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		req.Messages = r.messages
 
-		r.redraw("thinking...")
-		r.bz.CursorToScroll()
+		r.redraw("streaming...")
 
-		// Buffer the full stream — no output until complete.
-		// This gives us full control over styling and newlines.
-		var responseText strings.Builder
-		var iterThinking strings.Builder
-		resp, err := r.client.StreamWithCallback(ctx, req, func(event *api.StreamEvent) error {
-			if event.Type != api.StreamEventContentBlockDelta || event.Delta == nil {
-				return nil
-			}
-			if event.Delta.Thinking != "" {
-				iterThinking.WriteString(event.Delta.Thinking)
-			}
-			if event.Delta.Text != "" {
-				responseText.WriteString(event.Delta.Text)
-			}
-			return nil
-		})
-
-		if err != nil {
-			// Restore messages to pre-loop state — removes the user message
-			// and any accumulated assistant/tool_result messages from prior iterations.
+		// Stream tokens to stdout as they arrive, multiplexed with bezel events.
+		result := r.streamWithBezel(ctx, req)
+		if result.err != nil {
 			r.messages = r.messages[:messageSnapshot]
-			return fmt.Errorf("API call failed (iteration %d): %w", iteration, err)
+			return fmt.Errorf("API call failed (iteration %d): %w", iteration, result.err)
+		}
+		resp := result.resp
+
+		// Accumulate thinking for persistence
+		if result.thinking != "" {
+			turnThinking.WriteString(result.thinking)
 		}
 
-		// Render buffered output with proper styling and formatting.
-		// Thinking: styled inline, trimmed.
-		// Response: rendered as markdown via glamour, trimmed.
-		if iterThinking.Len() > 0 {
-			turnThinking.WriteString(iterThinking.String())
-			styled := r.thinkingStyle.Render(strings.TrimRight(iterThinking.String(), "\n \t"))
-			fmt.Println(styled)
-		}
-		if responseText.Len() > 0 {
-			rendered, renderErr := r.renderer.Render(responseText.String())
-			if renderErr != nil {
-				// Fallback to raw text if glamour fails
-				rendered = responseText.String()
-			}
-			rendered = strings.TrimRight(rendered, "\n \t")
-			if rendered != "" {
-				fmt.Println(rendered)
-			}
+		// Newline after streamed output (cursor is at end of last token)
+		if result.text != "" || result.thinking != "" {
+			fmt.Println()
 		}
 
 		// Blank line separates response from tool output
-		if resp.HasToolUse() && (responseText.Len() > 0 || iterThinking.Len() > 0) {
+		if resp.HasToolUse() && (result.text != "" || result.thinking != "") {
 			fmt.Println()
 		}
 
@@ -150,7 +259,7 @@ func (r *REPL) send(ctx context.Context, message string) error {
 			// Add assistant text to L1
 			r.messages = append(r.messages, api.MessageParam{
 				Role:    api.RoleAssistant,
-				Content: responseText.String(),
+				Content: result.text,
 			})
 			break
 		}
@@ -174,17 +283,18 @@ func (r *REPL) send(ctx context.Context, message string) error {
 			elapsed := time.Since(toolStart)
 
 			rec := toolRecord{Name: block.Name, Input: input}
-			inputSum := toolInputSummary(block.Name, input)
 
 			if result.IsError {
-				line := formatToolLine(block.Name, inputSum, "", result.Error, elapsed, true)
-				fmt.Println(r.errorStyle.Render(line))
+				display := formatToolBlock(block.Name, input, "", result.Error, elapsed, true)
+				icon := lip.NewStyle().Foreground(lip.Color("#EF4444")).Render("  ●")
+				fmt.Println(icon + " " + r.errorStyle.Render(display))
 				resultBlocks = append(resultBlocks, api.NewToolResultBlockError(block.ID, result.Error))
 				rec.Error = result.Error
 			} else {
 				preview := prettyOutput(result.Output, 200)
-				line := formatToolLine(block.Name, inputSum, preview, "", elapsed, false)
-				fmt.Println(r.toolStyle.Render(line))
+				display := formatToolBlock(block.Name, input, preview, "", elapsed, false)
+				icon := lip.NewStyle().Foreground(lip.Color("#22C55E")).Render("  ●")
+				fmt.Println(icon + " " + r.toolStyle.Render(display))
 				resultBlocks = append(resultBlocks, api.NewToolResultBlock(block.ID, result.Output))
 				rec.Output = result.Output
 			}
@@ -202,7 +312,6 @@ func (r *REPL) send(ctx context.Context, message string) error {
 
 		// Status for next iteration
 		r.redraw("thinking...")
-		r.bz.CursorToScroll()
 		finalResp = resp
 	}
 
@@ -258,14 +367,21 @@ func (r *REPL) send(ctx context.Context, message string) error {
 		}()
 	}
 
-	// Log usage
+	// Log usage with cache metrics
 	if finalResp != nil {
-		r.log.Info("turn complete",
+		logFields := []any{
 			"input_tokens", finalResp.Usage.InputTokens,
 			"output_tokens", finalResp.Usage.OutputTokens,
 			"stop_reason", finalResp.StopReason,
 			"l1_messages", len(r.messages),
-		)
+		}
+		if finalResp.Usage.CacheCreationInputTokens != nil {
+			logFields = append(logFields, "cache_create", *finalResp.Usage.CacheCreationInputTokens)
+		}
+		if finalResp.Usage.CacheReadInputTokens != nil {
+			logFields = append(logFields, "cache_read", *finalResp.Usage.CacheReadInputTokens)
+		}
+		r.log.Info("turn complete", logFields...)
 	}
 
 	return nil

@@ -12,8 +12,6 @@ import (
 // handleCommand processes slash commands.
 // Returns (handled, quit). When quit is true, the Run loop should exit cleanly.
 func (r *REPL) handleCommand(input string) (handled bool, quit bool) {
-	r.bz.CursorToScroll()
-
 	// Extract command and args
 	parts := strings.SplitN(input, " ", 2)
 	cmd := parts[0]

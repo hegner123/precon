@@ -629,4 +629,3 @@ func TestPrettyOutput_GenericStatus(t *testing.T) {
 		t.Fatalf("expected %q, got %q", "completed", got)
 	}
 }
-

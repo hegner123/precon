@@ -151,22 +151,163 @@ func toolInputSummary(name string, input map[string]any) string {
 	}
 }
 
-// formatToolLine formats a complete single-line tool display.
-// Success: "  ● name summary → result (duration)"
-// Error:   "  ✗ name summary (duration)\n      error message"
-func formatToolLine(name, inputSum, resultSum, errMsg string, elapsed time.Duration, isError bool) string {
-	dur := formatDuration(elapsed)
-	if isError {
-		line := fmt.Sprintf("  ✗ %s %s (%s)", name, inputSum, dur)
-		if errMsg != "" {
-			line += "\n" + fmt.Sprintf("      %s", truncate(errMsg, 120))
+// toolFileParam extracts the primary file/path from tool input for prominent display.
+func toolFileParam(name string, input map[string]any) string {
+	switch name {
+	case "read", "write", "sig", "splice", "split", "notab", "tabcount", "utf8", "conflicts":
+		return inputStr(input, "file")
+	case "delete":
+		return inputStr(input, "path")
+	case "stump", "imports":
+		return inputStr(input, "dir")
+	case "repfor", "checkfor":
+		if files, ok := input["file"].([]any); ok && len(files) > 0 {
+			if s, ok := files[0].(string); ok {
+				if len(files) == 1 {
+					return s
+				}
+				return fmt.Sprintf("%s (+%d more)", s, len(files)-1)
+			}
 		}
-		return line
+		if dirs, ok := input["dirs"].([]any); ok && len(dirs) > 0 {
+			if s, ok := dirs[0].(string); ok {
+				if len(dirs) == 1 {
+					return s
+				}
+				return fmt.Sprintf("%s (+%d more)", s, len(dirs)-1)
+			}
+		}
+		return ""
+	default:
+		for _, key := range []string{"file", "path", "dir"} {
+			if v := inputStr(input, key); v != "" {
+				return v
+			}
+		}
+		return ""
 	}
-	if resultSum != "" {
-		return fmt.Sprintf("  ● %s %s → %s (%s)", name, inputSum, resultSum, dur)
+}
+
+// toolKeyParams returns display lines for key parameters (excluding file/path already shown).
+func toolKeyParams(name string, input map[string]any) []string {
+	var params []string
+	add := func(key, val string) {
+		if val != "" {
+			params = append(params, fmt.Sprintf("%s: %s", key, val))
+		}
 	}
-	return fmt.Sprintf("  ● %s %s (%s)", name, inputSum, dur)
+
+	switch name {
+	case "checkfor":
+		add("search", fmt.Sprintf("%q", truncate(inputStr(input, "search"), 60)))
+	case "repfor":
+		add("search", fmt.Sprintf("%q", truncate(inputStr(input, "search"), 60)))
+		add("replace", fmt.Sprintf("%q", truncate(inputStr(input, "replace"), 60)))
+		if dryRun, ok := input["dry_run"].(bool); ok && dryRun {
+			add("mode", "dry run")
+		}
+	case "read":
+		if start, ok := input["start"].(float64); ok {
+			if end, ok := input["end"].(float64); ok {
+				add("lines", fmt.Sprintf("%d–%d", int(start), int(end)))
+			} else {
+				add("from", fmt.Sprintf("line %d", int(start)))
+			}
+		}
+	case "write":
+		if content, ok := input["content"].(string); ok {
+			lines := strings.Count(content, "\n") + 1
+			add("size", fmt.Sprintf("%d lines", lines))
+		}
+	case "bash":
+		add("command", truncate(inputStr(input, "command"), 80))
+	case "stump":
+		if depth, ok := input["depth"].(float64); ok && depth > 0 {
+			add("depth", fmt.Sprintf("%d", int(depth)))
+		}
+	case "cleanDiff":
+		if ref := inputStr(input, "ref"); ref != "" {
+			add("ref", ref)
+		}
+		if staged, ok := input["staged"].(bool); ok && staged {
+			add("scope", "staged")
+		}
+	case "splice":
+		if line, ok := input["line"].(float64); ok {
+			add("line", fmt.Sprintf("%d", int(line)))
+		}
+	case "split":
+		if line, ok := input["line"].(float64); ok {
+			add("line", fmt.Sprintf("%d", int(line)))
+		}
+	case "imports":
+		if recursive, ok := input["recursive"].(bool); ok && recursive {
+			add("mode", "recursive")
+		}
+	case "errs":
+		if format := inputStr(input, "format"); format != "" {
+			add("format", format)
+		}
+	case "transform":
+		if exec := inputStr(input, "exec"); exec != "" {
+			add("exec", truncate(exec, 60))
+		}
+	case "notab":
+		if spaces, ok := input["spaces"].(float64); ok {
+			add("spaces", fmt.Sprintf("%d", int(spaces)))
+		}
+		if tabs, ok := input["tabs"].(bool); ok && tabs {
+			add("mode", "spaces→tabs")
+		}
+	default:
+		skip := map[string]bool{"file": true, "path": true, "dir": true}
+		for k, v := range input {
+			if skip[k] {
+				continue
+			}
+			if s, ok := v.(string); ok && s != "" {
+				add(k, truncate(s, 60))
+			}
+		}
+	}
+	return params
+}
+
+// formatToolBlock formats a multi-line tool display block without the leading icon.
+// The caller renders the icon separately with its own color (green ● / red ●).
+//
+//	repfor
+//	    File: tui/helpers.go
+//	    search: "old"
+//	    replace: "new"
+//	    ⎿ 2 replacements in 1 file (234ms)
+func formatToolBlock(name string, input map[string]any, resultSum, errMsg string, elapsed time.Duration, isError bool) string {
+	dur := formatDuration(elapsed)
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "%s", name)
+
+	if file := toolFileParam(name, input); file != "" {
+		fmt.Fprintf(&b, "\n    File: %s", shortPath(file))
+	}
+
+	for _, p := range toolKeyParams(name, input) {
+		fmt.Fprintf(&b, "\n    %s", p)
+	}
+
+	if isError {
+		if errMsg != "" {
+			fmt.Fprintf(&b, "\n    ⎿ %s (%s)", truncate(errMsg, 120), dur)
+		} else {
+			fmt.Fprintf(&b, "\n    ⎿ error (%s)", dur)
+		}
+	} else if resultSum != "" {
+		fmt.Fprintf(&b, "\n    ⎿ %s (%s)", resultSum, dur)
+	} else {
+		fmt.Fprintf(&b, "\n    ⎿ done (%s)", dur)
+	}
+
+	return b.String()
 }
 
 // prettyOutput attempts to produce a compact human-readable summary of tool output.

@@ -67,6 +67,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hegner123/bezel v0.0.0-20260317143026-8b97edf35c33 h1:RSH4UwVt7akicWd1jFfmpaz1gvWGmo7RZUm8r0riIIY=
 github.com/hegner123/bezel v0.0.0-20260317143026-8b97edf35c33/go.mod h1:JbWBtkFzin9OdmZJ9mHCUYD5jsLBZUudlbSYBkZ1K6k=
+github.com/hegner123/bezel v0.0.0-20260320104733-39048b91673a h1:TxdQ7BAWPws8n1pX6A+Fuyh9nSNHALc4clxKcQK9D8I=
+github.com/hegner123/bezel v0.0.0-20260320104733-39048b91673a/go.mod h1:JbWBtkFzin9OdmZJ9mHCUYD5jsLBZUudlbSYBkZ1K6k=
 github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=

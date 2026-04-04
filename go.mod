@@ -30,7 +30,7 @@ require (
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/hegner123/bezel v0.0.0-20260317143026-8b97edf35c33 // indirect
+	github.com/hegner123/bezel v0.0.0-20260320104733-39048b91673a // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

@@ -52,6 +52,10 @@ type REPL struct {
 	l4          *storage.PgvectorStore   // L4 semantic storage (nil if not configured)
 	renderer    *glamour.TermRenderer
 
+	// Cached system prompt block -- built once, reused every turn.
+	// Contains the static base system prompt with long TTL cache control.
+	staticSystemBlock api.TextBlockParam
+
 	// Bezel — terminal chrome with scroll region
 	bz   *bezel.Bezel
 	ed   bezel.LineEditor
@@ -94,7 +98,7 @@ func New(log *slog.Logger, client *api.Client, cfg Config) (*REPL, error) {
 
 	engineCtx, engineCancel := context.WithCancel(context.Background())
 
-	return &REPL{
+	r := &REPL{
 		log:           log,
 		client:        client,
 		config:        cfg,
@@ -108,7 +112,15 @@ func New(log *slog.Logger, client *api.Client, cfg Config) (*REPL, error) {
 		errorStyle:    lip.NewStyle().Foreground(lip.Color("#EF4444")).Bold(true),
 		toolStyle:     lip.NewStyle().Foreground(lip.Color("#F59E0B")),
 		thinkingStyle: lip.NewStyle().Foreground(lip.Color("#C4B5FD")).Italic(true),
-	}, nil
+	}
+
+	// Pre-build the static system prompt block with 1-hour cache.
+	// This block never changes between turns, forming a stable cache prefix.
+	if cfg.SystemPrompt != "" {
+		r.staticSystemBlock = api.NewTextBlockWithCache(cfg.SystemPrompt, api.WithLongCache())
+	}
+
+	return r, nil
 }
 
 // SetL2 attaches L2 hot storage for message persistence.
@@ -158,20 +170,30 @@ func (r *REPL) SetL4(store *storage.PgvectorStore) {
 func (r *REPL) Run(ctx context.Context) error {
 	defer r.Close()
 
-	// Create bezel: 7 rows of chrome
-	// Row 0: blank
-	// Row 1: status
-	// Row 2: blank
-	// Row 3: ─── top border
-	// Row 4: prompt (cursor row)
-	// Row 5: ─── bottom border
-	// Row 6: hints
-	bz, err := bezel.New(os.Stdin, os.Stdout, 7)
+	// Push terminal content up to make room for the bezel. Without this,
+	// launching near the bottom of the screen leaves the cursor inside the
+	// bezel area and all fmt.Println output is hidden.
+	const bezelRows = 7
+	for range bezelRows {
+		fmt.Print("\n")
+	}
+
+	bz, err := bezel.New(os.Stdin, os.Stdout, bezelRows)
 	if err != nil {
 		return fmt.Errorf("create bezel: %w", err)
 	}
 	r.bz = bz
 	defer r.bz.Close()
+
+	// Park cursor at the bottom of the scroll region. bezel.New() restores
+	// the cursor to its pre-init position, which may be inside the bezel
+	// area if the terminal had few rows above the cursor at launch.
+	size := r.bz.Size()
+	scrollEnd := int(size.Rows) - bezelRows
+	if scrollEnd < 1 {
+		scrollEnd = 1
+	}
+	fmt.Fprintf(os.Stdout, "\033[%d;1H", scrollEnd)
 
 	// Print header in the scroll region
 	fmt.Println(r.promptStyle.Render("  precon") + r.statusStyle.Render(" — pre-conscious context management"))
@@ -199,7 +221,6 @@ func (r *REPL) Run(ctx context.Context) error {
 			r.hist.Add(input)
 
 			// Print user message to scroll region
-			r.bz.CursorToScroll()
 			fmt.Println(r.promptStyle.Render("precon > ") + input)
 
 			// Handle commands
@@ -214,13 +235,20 @@ func (r *REPL) Run(ctx context.Context) error {
 				}
 			}
 
-			// Process message — output goes to scroll region
+			// Process message — output goes to scroll region.
+			// streamWithBezel() inside send() handles bezel events during
+			// streaming (Ctrl-C, resize, typing). No drain goroutine needed.
+			sendCtx, sendCancel := context.WithCancel(ctx)
 			r.redraw("thinking...")
-			if sendErr := r.send(ctx, input); sendErr != nil {
-				if ctx.Err() != nil {
-					return nil
+			sendErr := r.send(sendCtx, input)
+			sendCancel()
+
+			if sendErr != nil {
+				if sendCtx.Err() != nil {
+					fmt.Println(r.statusStyle.Render("  cancelled"))
+				} else {
+					fmt.Println(r.errorStyle.Render("  error: " + sendErr.Error()))
 				}
-				fmt.Println(r.errorStyle.Render("  error: " + sendErr.Error()))
 			}
 			fmt.Println()
 			r.redraw("ready")
@@ -246,10 +274,10 @@ func (r *REPL) redraw(status string) {
 		"  %s · L1: %d messages · ~%dk tokens · %s",
 		r.config.Model, l1Count, l1Tokens/1000, status))
 
-	prompt := "precon > " + r.ed.String()
-	hints := r.statusStyle.Render("  enter send · ctrl-d quit · /help")
+	prompt := "precon > " + r.ed.StringWithCursor()
+	hints := r.statusStyle.Render("  enter send · alt-enter newline · ctrl-c quit · /help")
 
-	r.bz.RedrawPrompt(4, 9+r.ed.Pos(),
+	r.bz.Redraw(
 		"",                           // row 0: blank
 		statusLine,                   // row 1: status
 		"",                           // row 2: blank
