@@ -6,7 +6,7 @@ import (
 )
 
 func TestBlockAssembler_Empty(t *testing.T) {
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 	_, err := asm.Response()
 	if err == nil {
 		t.Fatal("expected error from empty assembler, got nil")
@@ -18,7 +18,7 @@ func TestBlockAssembler_Empty(t *testing.T) {
 }
 
 func TestBlockAssembler_SimpleText(t *testing.T) {
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 
 	// message_start
 	asm.Process(&StreamEvent{
@@ -108,7 +108,7 @@ func TestBlockAssembler_SimpleText(t *testing.T) {
 }
 
 func TestBlockAssembler_Thinking(t *testing.T) {
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 
 	asm.Process(&StreamEvent{
 		Type: StreamEventMessageStart,
@@ -213,7 +213,7 @@ func TestBlockAssembler_Thinking(t *testing.T) {
 }
 
 func TestBlockAssembler_ToolUse(t *testing.T) {
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 
 	asm.Process(&StreamEvent{
 		Type: StreamEventMessageStart,
@@ -330,7 +330,7 @@ func TestBlockAssembler_ToolUse(t *testing.T) {
 }
 
 func TestBlockAssembler_MultipleTextBlocks(t *testing.T) {
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 
 	asm.Process(&StreamEvent{
 		Type: StreamEventMessageStart,

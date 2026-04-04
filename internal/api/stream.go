@@ -80,8 +80,8 @@ func (s *StreamReader) Close() error {
 	return s.body.Close()
 }
 
-// blockAssembler accumulates streaming events into a final Response.
-type blockAssembler struct {
+// BlockAssembler accumulates streaming events into a final Response.
+type BlockAssembler struct {
 	response          *Response
 	contentBlocks     []ContentBlock
 	currentBlockIndex int
@@ -91,12 +91,12 @@ type blockAssembler struct {
 	signatureBuilder  strings.Builder
 }
 
-func newBlockAssembler() *blockAssembler {
-	return &blockAssembler{currentBlockIndex: -1}
+func NewBlockAssembler() *BlockAssembler {
+	return &BlockAssembler{currentBlockIndex: -1}
 }
 
 // Process handles a single stream event, updating internal state.
-func (a *blockAssembler) Process(event *StreamEvent) {
+func (a *BlockAssembler) Process(event *StreamEvent) {
 	switch event.Type {
 	case StreamEventMessageStart:
 		if event.Message != nil {
@@ -150,7 +150,7 @@ func (a *blockAssembler) Process(event *StreamEvent) {
 }
 
 // Response returns the assembled Response. Call after all events are processed.
-func (a *blockAssembler) Response() (*Response, error) {
+func (a *BlockAssembler) Response() (*Response, error) {
 	if a.response == nil {
 		return nil, errors.New("no message_start event received")
 	}
@@ -164,7 +164,7 @@ func (a *blockAssembler) Response() (*Response, error) {
 func (s *StreamReader) Collect() (*Response, error) {
 	defer func() { _ = s.Close() }()
 
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 	for {
 		event, err := s.Next()
 		if errors.Is(err, io.EOF) {
@@ -374,7 +374,7 @@ func (c *Client) StreamWithCallback(ctx context.Context, req *Request, callback 
 	}
 	defer func() { _ = stream.Close() }()
 
-	asm := newBlockAssembler()
+	asm := NewBlockAssembler()
 	for {
 		event, err := stream.Next()
 		if errors.Is(err, io.EOF) {
