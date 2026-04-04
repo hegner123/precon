@@ -31,7 +31,7 @@ func TestFormatToolContext_SingleResult(t *testing.T) {
 
 	got := FormatToolContext(results)
 
-	if !strings.Contains(got, "Prior context (from memory)") {
+	if !strings.Contains(got, "Prior context:") {
 		t.Error("missing header")
 	}
 	if !strings.Contains(got, "eviction, scoring") {

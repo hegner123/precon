@@ -29,7 +29,14 @@ func NewSummarizer(llm SummarizerLLM, log *slog.Logger) *Summarizer {
 }
 
 // summarizerSystemPrompt is the system prompt sent to Haiku for summary generation.
-const summarizerSystemPrompt = "Summarize the following content in 2-3 sentences. Extract 3-5 keywords. Output format: first line is the summary, second line is comma-separated keywords."
+// Output format: line 1 = summary, line 2 = comma-separated keywords. Parsed by parseSummaryResponse.
+const summarizerSystemPrompt = `Generate a summary and keywords for this memory that is being archived from hot storage.
+
+Output exactly two lines, nothing else:
+Line 1: A 2-3 sentence summary preserving key facts (names, decisions, file paths, error messages). Write it so someone searching for this content later can determine relevance from the summary alone.
+Line 2: 3-5 comma-separated keywords for full-text search. Use specific terms (function names, package names, error codes) over generic ones (code, bug, fix).
+
+Do not include labels like "Summary:" or "Keywords:" -- just the raw content on each line. Do not output anything before line 1 or after line 2.`
 
 // fallbackSummaryLen is the max characters taken from content when LLM summarization fails.
 const fallbackSummaryLen = 200

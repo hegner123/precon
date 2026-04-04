@@ -90,17 +90,43 @@ func New(log *slog.Logger, llm LLM, l2 L2Writer, model string) *Persister {
 		llm:   llm,
 		l2:    l2,
 		model: model,
-		systemPrompt: `You are a persistence agent. After each working agent turn, you review the conversation and decide what knowledge to save.
+		systemPrompt: `You are a persistence agent in the precon memory system. You run silently after each working agent turn. Your job: decide what knowledge from this turn is worth saving to long-term storage.
 
-You MUST call the persist_decision tool with your analysis. Do not respond with text.
+You MUST call the persist_decision tool exactly once. Do not respond with text. Any text response is discarded.
 
-Rules:
-- Identify new topics or knowledge worth persisting.
-- Score existing topics for continued relevance (0.0 = irrelevant, 1.0 = critical).
-- Be conservative: not every turn produces new knowledge.
-- Focus on: decisions made, problems solved, patterns identified, code changes.
-- Ignore: greetings, acknowledgments, status updates, repetitive tool output.
-- If nothing worth persisting, call the tool with empty arrays and should_evict=false.`,
+## What to persist
+
+Persist knowledge that would be useful if this conversation were resumed days or weeks later. Focus on:
+- Decisions and their rationale ("chose X because Y" -- save both the choice and the why)
+- Problems diagnosed and solutions applied (the fix, not the debugging process)
+- Code structure changes: new files, renamed functions, moved modules
+- User corrections or preferences expressed during the turn
+- Unresolved issues or known limitations discovered
+
+## What NOT to persist
+
+- Routine tool output (file listings, build output, test results that passed)
+- Greetings, acknowledgments, "sure, I'll do that" responses
+- Intermediate reasoning that led to the final answer
+- Information already captured in a previous turn's persistence
+- Raw code that was written (it exists in the files; persist the intent, not the code)
+
+## Score calibration
+
+When updating existing topic scores:
+- 1.0: actively being worked on this turn, referenced directly
+- 0.7-0.9: related to current work, likely needed soon
+- 0.4-0.6: background context, not referenced this turn but still relevant to the project
+- 0.1-0.3: drifting out of relevance, not referenced in several turns
+- 0.0: completely unrelated to any recent work
+
+## Eviction signal
+
+Set should_evict to true only when you observe that the turn references many topics and the storage feels dense. This is a hint, not a command. The actual eviction runs separately.
+
+## If nothing worth persisting
+
+Call the tool with empty arrays and should_evict=false. Most turns that are purely Q&A or minor edits produce nothing worth persisting. That is normal.`,
 	}
 }
 
@@ -108,28 +134,28 @@ Rules:
 func persistTool() api.Tool {
 	return api.Tool{
 		Name:        persistToolName,
-		Description: "Record persistence decisions about the current turn. Must be called exactly once.",
+		Description: "Record what knowledge from this turn should be saved to long-term memory. Call exactly once per turn.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"new_topics": map[string]any{
 					"type":        "array",
-					"description": "New topics to persist from this turn. Empty array if nothing new.",
+					"description": "New topics to save. Each represents a distinct piece of knowledge from this turn. Empty array if nothing new worth saving.",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"name": map[string]any{
 								"type":        "string",
-								"description": "Short descriptive topic name",
+								"description": "Short descriptive name, 3-6 words. Examples: 'Auth module split decision', 'SQLite FTS5 index schema', 'User prefers table-driven tests'",
 							},
 							"keywords": map[string]any{
 								"type":        "array",
 								"items":       map[string]any{"type": "string"},
-								"description": "Keywords for FTS5 search",
+								"description": "3-5 single-word terms for full-text search. Include: domain terms, file/package names, technology names. Example: ['auth', 'token', 'HMAC', 'session', 'middleware']",
 							},
 							"content": map[string]any{
 								"type":        "string",
-								"description": "The knowledge to persist — concise summary of what was learned/decided",
+								"description": "The knowledge to save. Write as a self-contained note that makes sense without conversation context. Include the decision/fact AND the reasoning. 1-3 sentences.",
 							},
 						},
 						"required": []string{"name", "keywords", "content"},
@@ -137,21 +163,21 @@ func persistTool() api.Tool {
 				},
 				"updated_scores": map[string]any{
 					"type":        "array",
-					"description": "Relevance score updates for existing topics. Empty array if no changes.",
+					"description": "Relevance score updates for existing topics mentioned in the turn context. Empty array if no existing topics need rescoring.",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"topic_id": map[string]any{
 								"type":        "string",
-								"description": "ID of the existing topic to update",
+								"description": "ID of the existing topic to rescore",
 							},
 							"new_score": map[string]any{
 								"type":        "number",
-								"description": "New relevance score from 0.0 (irrelevant) to 1.0 (critical)",
+								"description": "New relevance score: 1.0=active this turn, 0.7-0.9=related, 0.4-0.6=background, 0.1-0.3=drifting, 0.0=irrelevant",
 							},
 							"reason": map[string]any{
 								"type":        "string",
-								"description": "Brief reason for the score change",
+								"description": "Why the score changed, in under 10 words",
 							},
 						},
 						"required": []string{"topic_id", "new_score", "reason"},
@@ -159,7 +185,7 @@ func persistTool() api.Tool {
 				},
 				"should_evict": map[string]any{
 					"type":        "boolean",
-					"description": "True if L2 storage seems overloaded and old content should be evicted",
+					"description": "Set true when many topics are accumulating and older ones are no longer referenced. When in doubt, false.",
 				},
 			},
 			"required": []string{"new_topics", "updated_scores", "should_evict"},

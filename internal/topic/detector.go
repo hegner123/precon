@@ -78,7 +78,7 @@ func (d *Detector) IdentifyTopic(ctx context.Context, messages []Message) (*Topi
 
 	prompt := buildTopicIdentificationPrompt(messages)
 
-	sys := api.NewSystemString("You are a topic analysis assistant. You respond with ONLY valid JSON, no markdown fences, no preamble, no explanation.")
+	sys := api.NewSystemString("Respond with ONLY a raw JSON object. No markdown fences, no preamble, no explanation, no text after the JSON.")
 	req := &api.Request{
 		Model:     d.model,
 		MaxTokens: 300,
@@ -117,7 +117,7 @@ func (d *Detector) DetectShift(ctx context.Context, messages []Message, currentT
 
 	prompt := buildTopicShiftPrompt(messages, currentTopic)
 
-	sys := api.NewSystemString("You are a topic analysis assistant. You respond with ONLY valid JSON, no markdown fences, no preamble, no explanation.")
+	sys := api.NewSystemString("Respond with ONLY a raw JSON object. No markdown fences, no preamble, no explanation, no text after the JSON.")
 	req := &api.Request{
 		Model:     d.model,
 		MaxTokens: 500,
@@ -157,21 +157,16 @@ func buildTopicIdentificationPrompt(messages []Message) string {
 	}
 	messagesText := b.String()
 
-	return fmt.Sprintf(`You are a topic analysis assistant. Identify the main topic of this conversation.
+	return fmt.Sprintf(`Identify the main topic of this conversation.
 
 Messages:
 %s
 
-Task: Identify the main topic being discussed.
+Respond with ONLY a JSON object (no markdown fences, no text before or after):
+{"topic_name": "Descriptive name, 3-5 words", "keywords": ["term1", "term2", "term3"]}
 
-Respond with ONLY valid JSON in this exact format:
-{
-  "topic_name": "Short descriptive name (3-5 words)",
-  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"]
-}
-
-The topic name should be concise but descriptive.
-Keywords should be 3-5 relevant terms that capture the essence of the discussion.`, messagesText)
+Topic name: be specific. "SQLite FTS5 index design" not "database work". Use the most precise description the messages support.
+Keywords: 3-5 terms. Prefer specific nouns (file names, package names, technology names) over generic verbs (fix, add, change).`, messagesText)
 }
 
 // buildTopicShiftPrompt constructs the prompt for topic shift detection.
@@ -184,45 +179,30 @@ func buildTopicShiftPrompt(messages []Message, currentTopic *Topic) string {
 
 	var currentTopicContext string
 	if currentTopic != nil {
-		currentTopicContext = fmt.Sprintf(`
-Current Topic:
-- Name: %s
-- Keywords: %v
-`, currentTopic.Name, currentTopic.Keywords)
+		currentTopicContext = fmt.Sprintf("Current topic: %s [%s]",
+			currentTopic.Name, strings.Join(currentTopic.Keywords, ", "))
 	} else {
 		currentTopicContext = "No current topic established."
 	}
 
-	return fmt.Sprintf(`You are a topic analysis assistant. Analyze the following conversation messages to determine if the topic has shifted.
+	return fmt.Sprintf(`Determine if the conversation topic has shifted.
 
 %s
 
-Recent Messages:
+Recent messages:
 %s
 
-Task: Determine if the conversation has shifted to a new topic.
+A shift IS: the user introduces an unrelated subject, the domain changes entirely, or work moves to a different part of the codebase with different concerns.
 
-A topic shift occurs when:
-- The user explicitly introduces a new subject
-- The conversation direction changes significantly
-- A new domain or area of discussion begins
+A shift is NOT: follow-up questions on the same topic, drilling deeper into the same problem, minor tangents that return to the main thread, or switching between related subtasks within the same project area.
 
-A topic shift does NOT occur when:
-- The conversation continues on the same general subject
-- The user asks follow-up questions on the same topic
-- There are minor tangents that relate to the main topic
+Respond with ONLY a JSON object (no markdown fences, no text before or after):
+{"topic_shifted": false, "new_topic_name": "", "keywords": [], "confidence": 0.9, "reason": "Still discussing X"}
 
-Respond with ONLY valid JSON in this exact format:
-{
-  "topic_shifted": true/false,
-  "new_topic_name": "Short descriptive name (3-5 words)",
-  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-  "confidence": 0.0-1.0,
-  "reason": "Brief explanation"
-}
+Or if shifted:
+{"topic_shifted": true, "new_topic_name": "Specific 3-5 word name", "keywords": ["term1", "term2", "term3"], "confidence": 0.8, "reason": "Moved from X to Y"}
 
-If topic_shifted is false, leave new_topic_name empty and keywords as empty array.
-Confidence should reflect how certain you are about the shift (or lack thereof).`, currentTopicContext, messagesText)
+Confidence: 0.9+ for clear cases, 0.5-0.8 for ambiguous, below 0.5 means you are guessing (prefer false when unsure).`, currentTopicContext, messagesText)
 }
 
 // parseTopicIdentificationResponse parses Claude's response for topic identification.

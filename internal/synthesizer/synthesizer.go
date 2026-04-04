@@ -38,15 +38,45 @@ func New(log *slog.Logger, llm LLM, maxTokens int) *Synthesizer {
 		log:       log,
 		llm:       llm,
 		maxTokens: maxTokens,
-		systemPrompt: `You are a context synthesis agent. Your job is to compress retrieved memories into a concise context block for a working agent.
+		systemPrompt: `You are a context synthesis agent in the precon memory system. You compress retrieved memories into a focused context block that will be injected into a working agent's system prompt.
 
-Rules:
-- Extract only information relevant to the user's current prompt.
-- Preserve specific details: names, numbers, decisions, code snippets.
-- Drop conversational filler, greetings, and meta-discussion.
-- Output a structured context block, not a conversation summary.
-- If no retrieved content is relevant, output "No relevant prior context."
-- Keep output under the token budget. Be aggressive about compression.`,
+The working agent will see your output as "Prior Context" and use it as reference while handling the user's request. It will NOT see the raw memories you received. Your output is the only bridge between stored memory and the working agent.
+
+## Compression strategy
+
+1. Start from the user's prompt. Identify what the working agent needs to know to handle it.
+2. Scan each memory for information relevant to that need. Discard everything else.
+3. Prefer recent memories over older ones when they cover the same topic.
+4. When memories conflict, include both with timestamps so the working agent can judge recency.
+
+## What to preserve
+
+- Decisions made and their reasoning ("chose X because Y")
+- Specific details: file paths, function names, variable names, error messages, numbers
+- Code snippets that are directly relevant to the current prompt
+- Unresolved problems or known issues related to the current topic
+- User preferences or corrections expressed in prior sessions
+
+## What to drop
+
+- Conversational filler, greetings, acknowledgments, status updates
+- Redundant information (keep the most recent/complete version)
+- Tool output that has been superseded by later changes
+- Memories unrelated to the current prompt, regardless of their relevance score
+
+## Output format
+
+Write a structured block using concise headers. Example:
+
+[Topic: module refactoring]
+Decided to split auth into auth/token and auth/session (2 days ago). Token validation uses HMAC-SHA256. Tests in auth/token_test.go cover expiry edge cases.
+
+[Known issue]
+The session cleanup goroutine leaks if the context is cancelled before the ticker fires. Not yet fixed.
+
+If no retrieved content is relevant, output exactly: "No relevant prior context."
+
+Stay within the token budget. Compression is more important than completeness.`,
 	}
 }
 
@@ -58,19 +88,24 @@ func (s *Synthesizer) Synthesize(ctx context.Context, prompt string, results []t
 
 	// Build the input for the synthesis LLM
 	var input strings.Builder
-	fmt.Fprintf(&input, "USER PROMPT: %s\n\n", prompt)
-	fmt.Fprintf(&input, "RETRIEVED MEMORIES (%d results):\n\n", len(results))
+	fmt.Fprintf(&input, "USER PROMPT:\n%s\n\n", prompt)
+	fmt.Fprintf(&input, "RETRIEVED MEMORIES (%d results, ordered by relevance):\n\n", len(results))
 
 	for i, r := range results {
-		fmt.Fprintf(&input, "--- Memory %d [%s, score=%.2f] ---\n", i+1, r.SourceTier, r.Score)
+		age := ""
+		if !r.Memory.CreatedAt.IsZero() {
+			age = r.Memory.CreatedAt.Format("2006-01-02")
+		}
+		fmt.Fprintf(&input, "--- Memory %d [score=%.2f, date=%s] ---\n", i+1, r.Score, age)
 		if len(r.Memory.Keywords) > 0 {
 			fmt.Fprintf(&input, "Keywords: %s\n", strings.Join(r.Memory.Keywords, ", "))
 		}
 		fmt.Fprintf(&input, "%s\n\n", r.Memory.Content)
 	}
 
-	fmt.Fprintf(&input, "Compress the relevant memories into a context block (max ~%d tokens). "+
-		"Only include what the working agent needs to handle the user's prompt.", s.maxTokens)
+	fmt.Fprintf(&input, "Compress into a context block of at most ~%d tokens. "+
+		"Include only what the working agent needs to handle the user's prompt. "+
+		"Drop everything else.", s.maxTokens)
 
 	synthesized, err := s.llm.Complete(ctx, s.systemPrompt, input.String())
 	if err != nil {

@@ -266,9 +266,29 @@ func (d *Dreamer) runAnalysisWithStore(ctx context.Context, store tier.Store, ap
 func (d *Dreamer) analyzeMemories(ctx context.Context, ap AnalysisPrompt, memories []tier.Memory, lookbackDays int) (*Report, error) {
 	input := buildAnalysisInput(ap, memories, lookbackDays)
 
-	systemPrompt := `You are a dream analysis agent. You review accumulated session data and identify patterns, pain points, and workflow trends. Your reports help the user understand their work habits and recurring challenges.
+	systemPrompt := `You are a dream analysis agent in the precon memory system. You review accumulated session memories and produce structured reports on patterns, pain points, and workflow trends.
 
-Be specific. Cite concrete examples from the session data. Quantify when possible ("3 of 5 sessions involved debugging X"). Output actionable observations, not vague summaries.`
+## Output structure
+
+Organize your report into these sections (skip any section with no findings):
+
+**Recurring patterns** -- Topics, tools, or workflows that appear across multiple sessions. Quantify: "X of Y sessions involved Z."
+
+**Pain points** -- Problems that recurred, took disproportionate time, or were abandoned without resolution. Include specific error messages, file paths, or tool names when available.
+
+**Decisions and rationale** -- Significant technical decisions made during the period. Note if any decisions contradicted earlier ones (potential flip-flopping).
+
+**Unresolved threads** -- Work that was started but not completed, or questions raised but not answered.
+
+**Workflow observations** -- How the user approaches tasks: common sequences, preferred tools, time-of-day patterns if timestamps suggest them.
+
+## Rules
+
+- Cite specific memories: "Session on 2026-03-15 discussed X" not "there was discussion about X."
+- Quantify when possible. "3 of 7 sessions" is better than "several sessions."
+- Distinguish between facts from the data and your inferences. Mark inferences explicitly.
+- Do not pad the report. If the data is sparse, write a short report. A 2-sentence report from thin data is better than a padded page of speculation.
+- Do not fabricate examples or statistics. If you cannot count precisely, say "at least" or "approximately."`
 
 	content, err := d.llm.Complete(ctx, systemPrompt, input)
 	if err != nil {
@@ -286,22 +306,31 @@ Be specific. Cite concrete examples from the session data. Quantify when possibl
 // buildAnalysisInput constructs the user prompt from memories and analysis config.
 func buildAnalysisInput(ap AnalysisPrompt, memories []tier.Memory, lookbackDays int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "ANALYSIS: %s\nLOOKBACK: %d days\nRECENT TOPICS: %d\n\n",
-		ap.Name, lookbackDays, len(memories))
+	fmt.Fprintf(&b, "ANALYSIS: %s\nLOOKBACK: %d days\nMEMORIES: %d\n\n", ap.Name, lookbackDays, len(memories))
 
 	for i, m := range memories {
-		fmt.Fprintf(&b, "--- Topic %d (%s) ---\nKeywords: %v\n%s\n\n",
-			i+1, m.CreatedAt.Format("2006-01-02"), m.Keywords, m.Content)
+		fmt.Fprintf(&b, "--- Memory %d [%s] ---\n", i+1, m.CreatedAt.Format("2006-01-02 15:04"))
+		if len(m.Keywords) > 0 {
+			fmt.Fprintf(&b, "Keywords: %s\n", strings.Join(m.Keywords, ", "))
+		}
+		fmt.Fprintf(&b, "%s\n\n", m.Content)
 	}
 
-	b.WriteString("\n")
-	b.WriteString(ap.Prompt)
+	fmt.Fprintf(&b, "\nUSER ANALYSIS REQUEST:\n%s", ap.Prompt)
 	return b.String()
 }
 
 // mergeReports combines multiple partial analysis reports into one via the LLM.
 func (d *Dreamer) mergeReports(ctx context.Context, partials []string) (string, error) {
-	systemPrompt := "Merge these partial analysis reports into a single coherent report. Preserve specific examples and quantitative claims."
+	systemPrompt := `Merge these partial analysis reports into a single coherent report.
+
+Rules:
+- Preserve all specific examples, file paths, and quantitative claims from the partials.
+- Deduplicate: if two partials mention the same pattern or decision, combine them into one entry with the stronger evidence.
+- When partials contradict each other, include both observations and note the conflict.
+- Maintain the section structure (Recurring patterns, Pain points, Decisions, Unresolved threads, Workflow observations). Merge entries into the appropriate sections.
+- Recount statistics across the merged set. Do not simply add counts from partials (they may overlap).
+- Keep the merged report concise. The goal is one report, not a concatenation of partials.`
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "The following %d partial reports were generated from chunked analysis of a large memory set.\n\n", len(partials))
